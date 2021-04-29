@@ -4,7 +4,6 @@ from io import StringIO
 from unittest.mock import patch
 
 from django.core.management import call_command
-
 from django_dramatiq.management.commands import rundramatiq
 
 
@@ -278,3 +277,18 @@ def test_rundramatiq_can_fork(execvp_mock, settings):
         "tests.testapp3.tasks.utils",
         "tests.testapp3.tasks.utils.not_a_task",
     ])
+
+
+def test_rundramatiq_command_autodiscovers_additional_modules(settings):
+    settings.DRAMATIQ_AUTODISCOVER_MODULES = ("services", )
+    assert rundramatiq.Command().discover_tasks_modules() == [
+        "django_dramatiq.setup",
+        "django_dramatiq.tasks",
+        "tests.testapp1.tasks",
+        "tests.testapp2.tasks",
+        "tests.testapp3.tasks.other_tasks",
+        "tests.testapp3.tasks.tasks",
+        "tests.testapp3.tasks.utils",
+        "tests.testapp3.tasks.utils.not_a_task",
+        "tests.testapp4.services",
+    ]

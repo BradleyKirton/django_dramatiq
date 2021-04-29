@@ -1,4 +1,5 @@
 import importlib
+import itertools
 import multiprocessing
 import os
 import pkgutil
@@ -9,6 +10,7 @@ from django.apps import apps
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.utils.module_loading import module_has_submodule
+from django_dramatiq.apps import DjangoDramatiqConfig
 
 #: The number of available CPUs.
 CPU_COUNT = multiprocessing.cpu_count()
@@ -39,26 +41,30 @@ class Command(BaseCommand):
             help="Use gevent for worker concurrency.",
         )
         parser.add_argument(
-            "--processes", "-p",
+            "--processes",
+            "-p",
             default=CPU_COUNT,
             type=int,
             help="The number of processes to run (default: %d)." % CPU_COUNT,
         )
         parser.add_argument(
-            "--threads", "-t",
+            "--threads",
+            "-t",
             default=CPU_COUNT,
             type=int,
             help="The number of threads per process to use (default: %d)." % CPU_COUNT,
         )
         parser.add_argument(
-            "--path", "-P",
+            "--path",
+            "-P",
             default=".",
             nargs="*",
             type=str,
             help="The import path (default: .).",
         )
         parser.add_argument(
-            "--queues", "-Q",
+            "--queues",
+            "-Q",
             nargs="*",
             type=str,
             help="listen to a subset of queues (default: all queues)",
@@ -75,12 +81,27 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--fork-function",
-            action="append", dest="forks", default=[],
+            action="append",
+            dest="forks",
+            default=[],
             help="fork a subprocess to run the given function",
         )
 
-    def handle(self, use_watcher, use_polling_watcher, use_gevent, path, processes, threads, verbosity, queues,
-               pid_file, log_file, forks, **options):
+    def handle(
+        self,
+        use_watcher,
+        use_polling_watcher,
+        use_gevent,
+        path,
+        processes,
+        threads,
+        verbosity,
+        queues,
+        pid_file,
+        log_file,
+        forks,
+        **options,
+    ):
         executable_name = "dramatiq-gevent" if use_gevent else "dramatiq"
         executable_path = self._resolve_executable(executable_name)
         watch_args = ["--watch", "."] if use_watcher else []
@@ -96,19 +117,18 @@ class Command(BaseCommand):
         tasks_modules = self.discover_tasks_modules()
         process_args = [
             executable_name,
-            "--path", *path,
-            "--processes", str(processes),
-            "--threads", str(threads),
-
+            "--path",
+            *path,
+            "--processes",
+            str(processes),
+            "--threads",
+            str(threads),
             # --watch /path/to/project [--watch-use-polling]
             *watch_args,
-
             # [--fork-function import.path.function]*
             *forks_args,
-
             # -v -v ...
             *verbosity_args,
-
             # django_dramatiq.tasks app1.tasks app2.tasks ...
             *tasks_modules,
         ]
@@ -132,7 +152,6 @@ class Command(BaseCommand):
 
     def discover_tasks_modules(self):
         ignored_modules = set(getattr(settings, "DRAMATIQ_IGNORED_MODULES", []))
-        app_configs = (c for c in apps.get_app_configs() if module_has_submodule(c.module, "tasks"))
         tasks_modules = ["django_dramatiq.setup"]
 
         def is_ignored_module(module_name):
@@ -151,8 +170,21 @@ class Command(BaseCommand):
 
             return False
 
-        for conf in app_configs:
-            module = conf.name + ".tasks"
+        def generate_app_configs():
+            """Generate a tuple of app_config instances and submodule names."""
+
+            autodiscover_submodules = DjangoDramatiqConfig.task_autodiscover_modules()
+
+            for conf, submodule in itertools.product(
+                apps.get_app_configs(), autodiscover_submodules
+            ):
+                if module_has_submodule(conf.module, submodule) is False:
+                    continue
+
+                yield conf, submodule
+
+        for conf, submodule in generate_app_configs():
+            module = conf.name + f".{submodule}"
 
             if is_ignored_module(module):
                 self.stdout.write(" * Ignored tasks module: %r" % module)
